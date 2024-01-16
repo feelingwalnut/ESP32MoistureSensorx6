@@ -59,22 +59,29 @@ void setup() {
     }
     int average_value = sum / 5;  // Calculate average
     
-    // Check if the sensor is wet or dry based on the thresholds
-  String condition = (average_value > dryThreshold[i]) ? "Dry" : "Wet";  // Compare with specific threshold value
-
+   // Check if the sensor is wet, dry, or OK based on the thresholds
+ String condition;
+ if (average_value < wetThreshold[i]) {
+   condition = "Wet";
+ } else if (average_value > dryThreshold[i]) {
+   condition = "Dry";
+ } else {
+   condition = "OK";
+ }
     Serial.print("Sensor ");
     Serial.print(i);
     Serial.print(" average value:");
     Serial.print(average_value);
     Serial.print(", condition:");
     Serial.println(condition);
-
-    char topic[20];
-    char payload[15];
-    sprintf(topic, "%s/sensor%d", plant_topic, i);  // Include sensor ID in the topic
-    sprintf(payload, "%d %s", average_value, condition.c_str());
-    client.publish(topic, payload);
+ // Publish data to MQTT in JSON format
+ char topic[20];
+ char payload[50];
+ sprintf(topic, "%s/sensor%d", plant_topic, i);  // Include sensor ID in the topic
+ sprintf(payload, "{\"average_value\": %d, \"condition\": \"%s\"}", average_value, condition.c_str());
+ client.publish(topic, payload);
   }
+  
   delay(10000);  // Pause for 10 seconds (10,000 milliseconds)
   // Sleep for 1 hour (60 minutes * 60 seconds * 1000 milliseconds)
   ESP.deepSleep(60 * 60 * 1e6);
