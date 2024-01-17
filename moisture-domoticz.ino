@@ -63,7 +63,7 @@ void setup() {
     Serial.print("Sensor ");
     Serial.print(i);
     Serial.print(" average value:");
-    Serial.print(average_value);
+    Serial.println(average_value);
  // Publish data to MQTT in JSON format
  char topic[20];
  char payload[50];
