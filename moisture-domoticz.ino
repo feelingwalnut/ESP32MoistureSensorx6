@@ -1,20 +1,18 @@
 //Inspired by code at https://diyi0t.com/soil-moisture-sensor-tutorial-for-arduino-and-esp8266/ as well as by ideas from many other projects.
+//Compatibility reference https://www.domoticz.com/wiki/Domoticz_API/JSON_URL%27s#Soil_Moisture
+//Inspired by code at https://diyi0t.com/soil-moisture-sensor-tutorial-for-arduino-and-esp8266/ as well as by ideas from many other projects.
 #include "WiFi.h"
 #include "PubSubClient.h"
 
 // Define sensor pins
 int SensorPin[] = {36, 39, 34, 35, 32, 33};
 
-// Define wet and dry thresholds for each sensor (the values of my capacitive sensors pull down with moisture, some projects show the opposite)
-int wetThreshold[] = {1100, 1100, 1100, 1100, 1100, 1100};  // Define wet thresholds for each sensor
-int dryThreshold[] = {2600, 2600, 2600, 2600, 2600, 2600};  // Define dry thresholds for each sensor
-
 // Define WiFi and MQTT parameters
-const char* ssid = "xxxxxxxxxx";
-const char* wifi_password = "xxxxxxxxxx";
+const char* ssid = "xxxxxxxx";
+const char* wifi_password = "xxxxxxxxxxxx";
 const char* mqtt_server = "192.168.1.xx";
-const char* mqtt_username = "xxxxxxxxxx";
-const char* mqtt_password = "xxxxxxxxxx";
+const char* mqtt_username = "xxxxxxxxxxxxxx";
+const char* mqtt_password = "xxxxxxxx";
 const char* clientID = "client_Plant";
 const char* plant_topic = "plants";
 
@@ -66,13 +64,11 @@ void setup() {
     Serial.print(i);
     Serial.print(" average value:");
     Serial.print(average_value);
-    Serial.print(", condition:");
-    Serial.println(condition);
  // Publish data to MQTT in JSON format
  char topic[20];
  char payload[50];
  sprintf(topic, "%s/sensor%d", plant_topic, i);  // Include sensor ID in the topic
- sprintf(payload, "{\"average_value\": %d, \"condition\": \"%s\"}", average_value, condition.c_str());
+ sprintf(payload, "{\"average_value\": %d}", average_value);
  client.publish(topic, payload);
   }
   
