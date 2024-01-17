@@ -60,17 +60,6 @@ void setup() {
     int average_value = sum / 5;  // Calculate average
     average_value /= 15;  // Divide the average by 15
     average_value = max(0, min(200, average_value));  // Ensure it does not go below 0 or above 200
-
-    
-   // Check if the sensor is wet, dry, or OK based on the thresholds
- String condition;
- if (average_value < wetThreshold[i]) {
-   condition = "Wet";
- } else if (average_value > dryThreshold[i]) {
-   condition = "Dry";
- } else {
-   condition = "OK";
- }
  
     // Print sensor data to serial
     Serial.print("Sensor ");
