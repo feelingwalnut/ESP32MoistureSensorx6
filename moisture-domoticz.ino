@@ -1,6 +1,5 @@
 //Inspired by code at https://diyi0t.com/soil-moisture-sensor-tutorial-for-arduino-and-esp8266/ as well as by ideas from many other projects.
 //Compatibility reference https://www.domoticz.com/wiki/Domoticz_API/JSON_URL%27s#Soil_Moisture
-//Inspired by code at https://diyi0t.com/soil-moisture-sensor-tutorial-for-arduino-and-esp8266/ as well as by ideas from many other projects.
 #include "WiFi.h"
 #include "PubSubClient.h"
 
