@@ -13,7 +13,7 @@ const char* mqtt_server = "192.168.1.xx";
 const char* mqtt_username = "xxxxxxxxxxxxxx";
 const char* mqtt_password = "xxxxxxxx";
 const char* clientID = "client_Plant";
-const char* plant_topic = "plants";
+const char* plant_topic = "waterplants";
 
 // Initialise the WiFi and MQTT Client objects
 WiFiClient wifiClient;
@@ -63,13 +63,14 @@ void setup() {
     Serial.print(i);
     Serial.print(" average value:");
     Serial.println(average_value);
- // Publish data to MQTT in JSON format
- char topic[20];
- char payload[50];
- sprintf(topic, "%s/sensor%d", plant_topic, i);  // Include sensor ID in the topic
- sprintf(payload, "{\"average_value\": %d}", average_value);
- client.publish(topic, payload);
-  }
+    
+// Publish data to MQTT with subtopic "moisture" for each plant
+char topic[40];
+char payload[50];
+sprintf(topic, "%s/sensor/Plant%d/moisture", plant_topic, i);  // Include sensor ID and subtopic in the topic
+sprintf(payload, "%d", average_value);
+client.publish(topic, payload);
+}
   
   delay(10000);  // Pause for 10 seconds (10,000 milliseconds)
   // Sleep for 1 hour (60 minutes * 60 seconds * 1000 milliseconds)
