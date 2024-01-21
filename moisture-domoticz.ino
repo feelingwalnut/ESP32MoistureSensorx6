@@ -30,6 +30,15 @@ int lastPublishedValues[6] = {0, 0, 0, 0, 0, 0};
 // Define the idx for each sensor
 int sensorIdx[] = {506, 507, 508, 509, 510, 511}; // Replace with actual Domoticz idx for each sensor
 
+// Raw sensor value range and corresponding scale
+int rawValueRange[2] = {2800, 970}; // Raw sensor values range from 2800 (dry) to 400 (wet)
+int scaleRange[2] = {200, 0}; // Corresponding scale from 200 (dry) to 0 (wet)
+
+// Function to map raw sensor values to the desired scale
+int mapSensorValue(int rawValue) {
+  return map(rawValue, rawValueRange[0], rawValueRange[1], scaleRange[0], scaleRange[1]);
+}
+
 // Connect to WiFi and MQTT
 void connectToNetwork() {
   Serial.print("Connecting to WiFi: ");
@@ -71,26 +80,29 @@ void loop() {
   }
   mqttClient.poll();
 
-  // Read sensor values, average them, and publish to MQTT if there's a change
+// Read sensor values, average them, and publish to MQTT if there's a change
   for (int i = 0; i < 6; i++) {
     int sum = 0;
     for (int j = 0; j < 10; j++) {
       sum += analogRead(SensorPin[i]);  // Sum the readings
     }
     int average = sum / 10;  // Calculate the average
+    // Publish raw sensor value to serial (added code)
+    Serial.print("Sensor ");
+    Serial.print(i);
+    Serial.print(" Raw Moisture: ");
+    Serial.println(average);
 
-    // Divide by 15 and clamp the value between 0 and 200
-    int processedValue = average / 15;
-    processedValue = max(0, min(processedValue, 200));
+    int processedValue = mapSensorValue(average); // Map the average to the desired scale
 
     // Check if the processed value has changed and publish it
     if (processedValue != lastPublishedValues[i]) {
       lastPublishedValues[i] = processedValue; // Update the stored value for this sensor
 
-      // Print sensor data to serial
+      // Print processed sensor data to serial
       Serial.print("Sensor ");
       Serial.print(i);
-      Serial.print(" Moisture: ");
+      Serial.print(" Mapped Moisture: ");
       Serial.println(processedValue);
 
       // Prepare the JSON payload for Domoticz
