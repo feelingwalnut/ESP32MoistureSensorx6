@@ -17,16 +17,16 @@ struct Config {
   String mqtt_password = "mqtt_pass";
   String clientID = "device_name";
   String mqtt_topic = "domoticz/in";
-  int SensorPin[NUM_SENSORS] = {36, 39, 34, 35, 32, 33};
-  int rawValueRange[2] = {2830, 890}; // Dry-wet
-  int scaleRange[2] = {200, 0}; // Dry-wet
+  int SensorPin[NUM_SENSORS] = {36,39,34,35,32,33};
+  int rawRange[2] = {2830,890}; // Dry-wet
+  int scaleRange[2] = {200,0}; // Dry-wet
   int relayPin = 26;
-  int moistureThreshold = 100;
+  int WetLimit = 100;
   long relayOnTime = 10; // Time in seconds
-  unsigned long pollIntervalMinutes = 60; // Default: 60 minutes
-  int numberOfSamples = 10; // Default: 10 samples
-  int requiredMoistureSensors = 3;
-  int sensorIdx[NUM_SENSORS] = {506, 507, 508, 509, 510, 511}; // Sensor indices for MQTT messages
+  unsigned long pollTime = 60; // Default: 60 minutes
+  int Samples = 10; // Default: 10 samples
+  int NoOfSensor = 3;
+  int sensorIdx[NUM_SENSORS] = {506,507,508,509,510,511};  // Sensor indices for MQTT messages
 };
 
 Config config;
@@ -34,69 +34,85 @@ Preferences preferences;
 WiFiClient wifiClient;
 MqttClient mqttClient(wifiClient);
 AsyncWebServer server(80);
-int lastPublishedValues[NUM_SENSORS] = {0};
-unsigned long relayOffTime = 0; // For non-blocking relay timing
-bool relayOn = false; // Relay state tracking
+int lastPublishedValues[NUM_SENSORS] = { 0 };
+unsigned long relayOffTime = 0;  // For non-blocking relay timing
+bool relayOn = false;            // Relay state tracking
 
 // Maps sensor value to a defined scale
 int mapSensorValue(int rawValue) {
-  return map(rawValue, config.rawValueRange[0], config.rawValueRange[1], config.scaleRange[0], config.scaleRange[1]);
-}
-
-// Parses comma-separated string values into an integer array
-void parseCommaSeparatedValues(String input, int* outputArray, int arraySize) {
-  int idx = 0, lastIdx = 0, arrayIdx = 0;
-  while ((idx = input.indexOf(',', lastIdx)) != -1 && arrayIdx < arraySize) {
-    outputArray[arrayIdx++] = input.substring(lastIdx, idx).toInt();
-    lastIdx = idx + 1;
-  }
-  if (arrayIdx < arraySize) { // Handle the last value
-    outputArray[arrayIdx] = input.substring(lastIdx).toInt();
-  }
+  return map(rawValue, config.rawRange[0], config.rawRange[1], config.scaleRange[0], config.scaleRange[1]);
 }
 
 // Saves configuration to non-volatile storage (NVS)
 void saveConfig() {
-    preferences.begin("config", false);
-    preferences.putString("ssid", config.ssid);
-    preferences.putString("wifi_password", config.wifi_password);
-    preferences.putString("mqtt_server", config.mqtt_server);
-    preferences.putString("mqtt_username", config.mqtt_username);
-    preferences.putString("mqtt_password", config.mqtt_password);
-    preferences.putString("clientID", config.clientID);
-    preferences.putString("mqtt_topic", config.mqtt_topic);
-    preferences.putInt("relayPin", config.relayPin);
-    preferences.putInt("moistureThreshold", config.moistureThreshold);
-    preferences.putInt("relayOnTime", config.relayOnTime);
-    preferences.putInt("pollIntervalMinutes", config.pollIntervalMinutes);
-    preferences.putInt("numberOfSamples", config.numberOfSamples);
-    preferences.putInt("requiredMoistureSensors", config.requiredMoistureSensors);
-    for(int i = 0; i < NUM_SENSORS; i++) {
-      preferences.putInt(String("sensorIdx") + i, config.sensorIdx[i]);
-    }
-    preferences.end();
+  preferences.begin("config", false);
+  preferences.putString("ssid", config.ssid);
+  preferences.putString("wifi_password", config.wifi_password);
+  preferences.putString("mqtt_server", config.mqtt_server);
+  preferences.putString("mqtt_username", config.mqtt_username);
+  preferences.putString("mqtt_password", config.mqtt_password);
+  preferences.putString("clientID", config.clientID);
+  preferences.putString("mqtt_topic", config.mqtt_topic);
+  preferences.putInt("relayPin", config.relayPin);
+  preferences.putInt("WetLimit", config.WetLimit);
+  preferences.putInt("relayOnTime", config.relayOnTime);
+  preferences.putInt("pollTime", config.pollTime);
+  preferences.putInt("Samples", config.Samples);
+  preferences.putInt("NoOfSensor", config.NoOfSensor);
+  // Convert SensorPin array to CSV string and save
+  String sensorPinsCSV = "";
+  for (int i = 0; i < NUM_SENSORS; i++) {
+    sensorPinsCSV += String(config.SensorPin[i]);
+    if (i < NUM_SENSORS - 1) sensorPinsCSV += ",";
+  }
+  preferences.putString("SensorPin", sensorPinsCSV);
+
+  // Convert sensorIdx array to CSV string and save
+  String sensorIdxCSV = "";
+  for (int i = 0; i < NUM_SENSORS; i++) {
+    sensorIdxCSV += String(config.sensorIdx[i]);
+    if (i < NUM_SENSORS - 1) sensorIdxCSV += ",";
+  }
+  preferences.putString("sensorIdx", sensorIdxCSV);
+  preferences.putInt("rawRangeMin", config.rawRange[0]);
+  preferences.putInt("rawRangeMax", config.rawRange[1]);
+  preferences.putInt("scaleRangeMin", config.scaleRange[0]);
+  preferences.putInt("scaleRangeMax", config.scaleRange[1]);
+  preferences.end();
 }
 
 // Loads configuration from non-volatile storage (NVS)
 void loadConfig() {
-    preferences.begin("config", true);
-    config.ssid = preferences.getString("ssid", config.ssid);
-    config.wifi_password = preferences.getString("wifi_password", config.wifi_password);
-    config.mqtt_server = preferences.getString("mqtt_server", config.mqtt_server);
-    config.mqtt_username = preferences.getString("mqtt_username", config.mqtt_username);
-    config.mqtt_password = preferences.getString("mqtt_password", config.mqtt_password);
-    config.clientID = preferences.getString("clientID", config.clientID);
-    config.mqtt_topic = preferences.getString("mqtt_topic", config.mqtt_topic);
-    config.relayPin = preferences.getInt("relayPin", config.relayPin);
-    config.moistureThreshold = preferences.getInt("moistureThreshold", config.moistureThreshold);
-    config.relayOnTime = preferences.getInt("relayOnTime", config.relayOnTime);
-    config.pollIntervalMinutes = preferences.getInt("pollIntervalMinutes", config.pollIntervalMinutes);
-    config.numberOfSamples = preferences.getInt("numberOfSamples", config.numberOfSamples);
-    config.requiredMoistureSensors = preferences.getInt("requiredMoistureSensors", config.requiredMoistureSensors);
-    for(int i = 0; i < 6; i++) { // Load sensor indices
-      config.sensorIdx[i] = preferences.getInt(String("sensorIdx") + i, config.sensorIdx[i]);
-    }
-    preferences.end();
+  preferences.begin("config", true);
+  config.ssid = preferences.getString("ssid", config.ssid);
+  config.wifi_password = preferences.getString("wifi_password", config.wifi_password);
+  config.mqtt_server = preferences.getString("mqtt_server", config.mqtt_server);
+  config.mqtt_username = preferences.getString("mqtt_username", config.mqtt_username);
+  config.mqtt_password = preferences.getString("mqtt_password", config.mqtt_password);
+  config.clientID = preferences.getString("clientID", config.clientID);
+  config.mqtt_topic = preferences.getString("mqtt_topic", config.mqtt_topic);
+  config.relayPin = preferences.getInt("relayPin", config.relayPin);
+  config.WetLimit = preferences.getInt("WetLimit", config.WetLimit);
+  config.relayOnTime = preferences.getInt("relayOnTime", config.relayOnTime);
+  config.pollTime = preferences.getInt("pollTime", config.pollTime);
+  config.Samples = preferences.getInt("Samples", config.Samples);
+  config.NoOfSensor = preferences.getInt("NoOfSensor", config.NoOfSensor);
+  // Load and parse SensorPin CSV string
+  String sensorPinsCSV = preferences.getString("SensorPin", "");
+  if (!sensorPinsCSV.isEmpty()) {
+    parseCommaSeparatedValues(sensorPinsCSV, config.SensorPin, NUM_SENSORS);
+  }
+
+  // Load and parse sensorIdx CSV string
+  String sensorIdxCSV = preferences.getString("sensorIdx", "");
+  if (!sensorIdxCSV.isEmpty()) {
+    parseCommaSeparatedValues(sensorIdxCSV, config.sensorIdx, NUM_SENSORS);
+  }
+  config.rawRange[0] = preferences.getInt("rawRangeMin", config.rawRange[0]);
+  config.rawRange[1] = preferences.getInt("rawRangeMax", config.rawRange[1]);
+  config.scaleRange[0] = preferences.getInt("scaleRangeMin", config.scaleRange[0]);
+  config.scaleRange[1] = preferences.getInt("scaleRangeMax", config.scaleRange[1]);
+  preferences.end();
 }
 
 // Connects to WiFi network or creates an ad-hoc network if connection fails
@@ -105,7 +121,7 @@ void connectToWiFi() {
   Serial.println(config.ssid);
   WiFi.begin(config.ssid.c_str(), config.wifi_password.c_str());
   unsigned long startTime = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - startTime < 30000) { // 30 seconds timeout
+  while (WiFi.status() != WL_CONNECTED && millis() - startTime < 30000) {  // 30 seconds timeout
     delay(500);
     Serial.print(".");
   }
@@ -125,12 +141,12 @@ void connectToWiFi() {
       return;
     }
     // Attempting to create Soft AP
-    bool apSuccess = WiFi.softAP("Plants"); // SSID for the ad-hoc network
-    if(apSuccess) {
-        Serial.print("Ad-hoc network SSID: 'Plants' with IP: ");
-        Serial.println(WiFi.softAPIP());
+    bool apSuccess = WiFi.softAP("Plants");  // SSID for the ad-hoc network
+    if (apSuccess) {
+      Serial.print("Ad-hoc network SSID: 'Plants' with IP: ");
+      Serial.println(WiFi.softAPIP());
     } else {
-        Serial.println("Failed to create ad-hoc network. Please check the configuration and device capabilities.");
+      Serial.println("Failed to create ad-hoc network. Please check the configuration and device capabilities.");
     }
   }
 }
@@ -138,16 +154,17 @@ void connectToWiFi() {
 void connectToMQTT() {
   mqttClient.setId(config.clientID.c_str());
   mqttClient.setUsernamePassword(config.mqtt_username.c_str(), config.mqtt_password.c_str());
-  int attempts = 0; // Counter for connection attempts
-  while (!mqttClient.connect(config.mqtt_server.c_str(), 1883) && attempts < 5) {
+  int attempts = 0;  // Counter for connection attempts
+  while (!mqttClient.connect(config.mqtt_server.c_str(), 1883) && attempts < 3) {
     Serial.print(".");
-    delay(5000); // Wait 5 seconds before the next attempt
-    attempts++; // Increment the attempt counter
+    delay(5000);  // Wait 5 seconds before the next attempt
+    attempts++;   // Increment the attempt counter
   }
-  if (attempts < 5) {
+  if (attempts < 3) {
     Serial.println("\nConnected to MQTT");
   } else {
     Serial.println("\nFailed to connect to MQTT, proceeding without MQTT functionality.");
+    // After 3 unsuccessful attempts, the function will end, allowing the program to continue without MQTT functionality
   }
 }
 
@@ -157,15 +174,52 @@ void connectToNetwork() {
   connectToMQTT();
 }
 
+// Parses comma-separated sensor pins and updates the configuration
+void parseAndSetSensorPins(String sensorPins) {
+  int pinsArray[NUM_SENSORS];
+  parseCommaSeparatedValues(sensorPins, pinsArray, NUM_SENSORS);
+  for (int i = 0; i < NUM_SENSORS; i++) {
+    config.SensorPin[i] = pinsArray[i];
+  }
+}
+void parseAndSetSensorIdxs(String sensorIdxs) {
+  int idxsArray[NUM_SENSORS];
+  parseCommaSeparatedValues(sensorIdxs, idxsArray, NUM_SENSORS);
+  for (int i = 0; i < NUM_SENSORS; i++) {
+    config.sensorIdx[i] = idxsArray[i];
+  }
+}
+// Parses a comma-separated string into an array of integers
+void parseCommaSeparatedValues(String csv, int array[], int arraySize) {
+  int idx = 0;      // Index for the current position in the array
+  int lastIdx = 0;  // Last index where a number starts
+  for (int i = 0; i <= csv.length(); i++) {
+    // Check for end of string or comma
+    if (i == csv.length() || csv[i] == ',') {
+      if (idx < arraySize) {
+        array[idx++] = csv.substring(lastIdx, i).toInt();
+      }
+      lastIdx = i + 1;  // Move past the comma
+    }
+  }
+}
+
 // Sets up the web server and handles GET and POST requests
 void setupWebServer() {
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
     // Generate HTML form with current configuration values
     String html = "<html><body><h1>Plant Monitoring System</h1>"
-                  "<form action='/submit' method='POST'>"
-                  "SSID: <input type='text' name='ssid' value='" + config.ssid + "'><br>"
-                  "WiFi Password: <input type='password' name='wifiPassword' value='" + config.wifi_password + "'><br>"
-                  "Sensor Pins (comma-separated): <input type='text' name='sensorPins' value='";
+                  "<h2>Sensor Readings</h2><ul>";
+    for (int i = 0; i < NUM_SENSORS; i++) {
+      html += "<li>Sensor " + String(i) + ": " + String(lastPublishedValues[i]) + "</li>";
+    }
+    html += "</ul>"
+            "<form action='/submit' method='POST'>"
+            "SSID: <input type='text' name='ssid' value='"
+            + config.ssid + "'><br>"
+                            "WiFi Password: <input type='password' name='wifiPassword' value='"
+            + config.wifi_password + "'><br>"
+                                     "Sensor Pins (comma-separated): <input type='text' name='sensorPins' value='";
     for (int i = 0; i < 6; i++) {
       html += String(config.SensorPin[i]);
       if (i < 5) html += ",";
@@ -177,90 +231,110 @@ void setupWebServer() {
       if (i < 5) html += ",";
     }
     html += "'><br>"
-            "MQTT Server: <input type='text' name='mqttServer' value='" + config.mqtt_server + "'><br>"
-            "MQTT Topic: <input type='text' name='mqttTopic' value='" + config.mqtt_topic + "'><br>"
-            "MQTT Username: <input type='text' name='mqttUsername' value='" + config.mqtt_username + "'><br>"
-            "MQTT Password: <input type='password' name='mqttPassword' value='" + config.mqtt_password + "'><br>"
-            "Client ID: <input type='text' name='clientID' value='" + config.clientID + "'><br>"
-            "Raw Value Range (dry-wet)(comma-separated): <input type='text' name='rawValueRange' value='" + String(config.rawValueRange[0]) + "," + String(config.rawValueRange[1]) + "'><br>"
-            "Scale Range (dry-wet)(comma-separated): <input type='text' name='scaleRange' value='" + String(config.scaleRange[0]) + "," + String(config.scaleRange[1]) + "'><br>"
-            "Relay Pin: <input type='text' name='relayPin' value='" + String(config.relayPin) + "'><br>"
-            "Moisture Threshold: <input type='text' name='moistureThreshold' value='" + String(config.moistureThreshold) + "'><br>"
-            "Relay On Time: <input type='text' name='relayOnTime' value='" + String(config.relayOnTime) + "'><br>"
-            "Number of sensors required to trigger irrigation: <input type='text' name='requiredMoistureSensors' value='" + String(config.requiredMoistureSensors) + "'><br>"
-            "Poll Interval (minutes): <input type='text' name='pollInterval' value='" + String(config.pollIntervalMinutes) + "'><br>"
-            "Number of Samples: <input type='text' name='numSamples' value='" + String(config.numberOfSamples) + "'><br>"
-            "<input type='submit' value='Update'>"
-            "</form></body></html>";
-        request->send(200, "text/html", html);
-    });
+            "MQTT Server: <input type='text' name='mqttServer' value='"
+            + config.mqtt_server + "'><br>"
+                                   "MQTT Topic: <input type='text' name='mqttTopic' value='"
+            + config.mqtt_topic + "'><br>"
+                                  "MQTT Username: <input type='text' name='mqttUsername' value='"
+            + config.mqtt_username + "'><br>"
+                                     "MQTT Password: <input type='password' name='mqttPassword' value='"
+            + config.mqtt_password + "'><br>"
+                                     "Client ID: <input type='text' name='clientID' value='"
+            + config.clientID + "'><br>"
+                                "Raw Value Range (dry-wet)(comma-separated): <input type='text' name='rawRange' value='"
+            + String(config.rawRange[0]) + "," + String(config.rawRange[1]) + "'><br>"
+                                                                                        "Scale Range (dry-wet)(comma-separated): <input type='text' name='scaleRange' value='"
+            + String(config.scaleRange[0]) + "," + String(config.scaleRange[1]) + "'><br>"
+                                                                                  "Relay Pin: <input type='text' name='relayPin' value='"
+            + String(config.relayPin) + "'><br>"
+                                        "Moisture Threshold: <input type='text' name='WetLimit' value='"
+            + String(config.WetLimit) + "'><br>"
+                                                 "Relay On Time: <input type='text' name='relayOnTime' value='"
+            + String(config.relayOnTime) + "'><br>"
+                                           "Number of sensors required to trigger irrigation: <input type='text' name='NoOfSensor' value='"
+            + String(config.NoOfSensor) + "'><br>"
+                                                       "Poll Interval (minutes): <input type='text' name='pollTime' value='"
+            + String(config.pollTime) + "'><br>"
+                                                   "Number of Samples: <input type='text' name='numSamples' value='"
+            + String(config.Samples) + "'><br>"
+                                               "<input type='submit' value='Update'>"
+                                               "</form></body></html>";
+    request->send(200, "text/html", html);
+  });
 
-    server.on("/submit", HTTP_POST, [](AsyncWebServerRequest *request) {
-        // Temporary variables to hold the parsed form inputs
-        String tempSensorPins, tempRawValueRange, tempScaleRange;
-        // Update config settings from form inputs
-        if (request->hasParam("ssid", true)) {
-          config.ssid = request->getParam("ssid", true)->value();
-        }
-        if (request->hasParam("wifiPassword", true)) {
-          config.wifi_password = request->getParam("wifiPassword", true)->value();
-        }
-        if (request->hasParam("mqttServer", true)) {
-          config.mqtt_server = request->getParam("mqttServer", true)->value();
-        }
-        if (request->hasParam("mqttTopic", true)) {
-          config.mqtt_topic = request->getParam("mqttTopic", true)->value();
-        }
-        if (request->hasParam("mqttUsername", true)) {
-          config.mqtt_username = request->getParam("mqttUsername", true)->value();
-        }
-        if (request->hasParam("mqttPassword", true)) {
-          config.mqtt_password = request->getParam("mqttPassword", true)->value();
-        }
-        if (request->hasParam("clientID", true)) {
-          config.clientID = request->getParam("clientID", true)->value();
-        }
-        if (request->hasParam("relayPin", true)) {
-          config.relayPin = request->getParam("relayPin", true)->value().toInt();
-        }
-        if (request->hasParam("moistureThreshold", true)) {
-          config.moistureThreshold = request->getParam("moistureThreshold", true)->value().toInt();
-        }
-        if (request->hasParam("relayOnTime", true)) {
-          config.relayOnTime = request->getParam("relayOnTime", true)->value().toInt();
-        }
-        if (request->hasParam("requiredMoistureSensors", true)) {
-          config.requiredMoistureSensors = request->getParam("requiredMoistureSensors", true)->value().toInt();
-        }
-        if (request->hasParam("pollInterval", true)) {
-          config.pollIntervalMinutes = request->getParam("pollInterval", true)->value().toInt();
-        }
-        if (request->hasParam("numSamples", true)) {
-          config.numberOfSamples = request->getParam("numSamples", true)->value().toInt();
-        }
-        if (request->hasParam("sensorPins", true)) {
-          String sensorPins = request->getParam("sensorPins", true)->value();
-          parseAndSetSensorPins(sensorPins);
-        }
-        if (request->hasParam("sensorIdxs", true)) {
-          String sensorIdxs = request->getParam("sensorIdxs", true)->value();
-          int idxArray[6]; // Temporary array to store parsed indices
-          int idx = 0, lastIdx = 0, arrayIdx = 0;
-          while ((idx = sensorIdxs.indexOf(',', lastIdx)) != -1 && arrayIdx < 6) {
-            idxArray[arrayIdx++] = sensorIdxs.substring(lastIdx, idx).toInt();
-            lastIdx = idx + 1;
-          }
-          idxArray[arrayIdx] = sensorIdxs.substring(lastIdx).toInt(); // Last value
-          for (int i = 0; i < 6; i++) {
-            config.sensorIdx[i] = idxArray[i];
-          }
-        }
-        saveConfig(); // Save the updated configuration to NVS
-        // Redirect back to the form page or indicate success
-        request->send(200, "text/html", "<p>Settings updated. <a href='/'>Go back</a></p>");
-        delay(3000);
-        ESP.restart();
-    });
+  server.on("/submit", HTTP_POST, [](AsyncWebServerRequest *request) {
+    // Temporary variables to hold the parsed form inputs
+    String tempSensorPins, tempSensorIdxs;
+    // Update config settings from form inputs
+    if (request->hasParam("ssid", true)) {
+      config.ssid = request->getParam("ssid", true)->value();
+    }
+    if (request->hasParam("wifiPassword", true)) {
+      config.wifi_password = request->getParam("wifiPassword", true)->value();
+    }
+    if (request->hasParam("mqttServer", true)) {
+      config.mqtt_server = request->getParam("mqttServer", true)->value();
+    }
+    if (request->hasParam("sensorIdxs", true)) {
+      tempSensorIdxs = request->getParam("sensorIdxs", true)->value();
+      parseAndSetSensorIdxs(tempSensorIdxs);  // Use improved parsing function
+    }
+    if (request->hasParam("mqttTopic", true)) {
+      config.mqtt_topic = request->getParam("mqttTopic", true)->value();
+    }
+    if (request->hasParam("mqttUsername", true)) {
+      config.mqtt_username = request->getParam("mqttUsername", true)->value();
+    }
+    if (request->hasParam("mqttPassword", true)) {
+      config.mqtt_password = request->getParam("mqttPassword", true)->value();
+    }
+    if (request->hasParam("clientID", true)) {
+      config.clientID = request->getParam("clientID", true)->value();
+    }
+    if (request->hasParam("relayPin", true)) {
+      config.relayPin = request->getParam("relayPin", true)->value().toInt();
+    }
+    if (request->hasParam("WetLimit", true)) {
+      config.WetLimit = request->getParam("WetLimit", true)->value().toInt();
+    }
+    if (request->hasParam("rawRange", true)) {
+      String rawRange = request->getParam("rawRange", true)->value();
+      int rangeArray[2];
+      parseCommaSeparatedValues(rawRange, rangeArray, 2);
+      config.rawRange[0] = rangeArray[0];
+      config.rawRange[1] = rangeArray[1];
+    }
+    if (request->hasParam("scaleRange", true)) {
+      String scaleRange = request->getParam("scaleRange", true)->value();
+      int rangeArray[2];
+      parseCommaSeparatedValues(scaleRange, rangeArray, 2);
+      config.scaleRange[0] = rangeArray[0];
+      config.scaleRange[1] = rangeArray[1];
+    }
+
+    if (request->hasParam("relayOnTime", true)) {
+      config.relayOnTime = request->getParam("relayOnTime", true)->value().toInt();
+    }
+    if (request->hasParam("NoOfSensor", true)) {
+      config.NoOfSensor = request->getParam("NoOfSensor", true)->value().toInt();
+    }
+    if (request->hasParam("pollTime", true)) {
+      config.pollTime = request->getParam("pollTime", true)->value().toInt();
+    }
+    if (request->hasParam("numSamples", true)) {
+      config.Samples = request->getParam("numSamples", true)->value().toInt();
+    }
+    if (request->hasParam("sensorPins", true)) {
+      String sensorPins = request->getParam("sensorPins", true)->value();
+      parseAndSetSensorPins(sensorPins);
+    }
+
+    saveConfig();  // Save the updated configuration to NVS
+    // Redirect back to the form page or indicate success
+    request->send(200, "text/html", "<p>Settings updated. The device will restart now.</p><script>setTimeout(function(){window.location.href='/'}, 3000);</script>");
+    delay(100);
+    ESP.restart();
+  });
 }
 
 void setup() {
@@ -273,53 +347,66 @@ void setup() {
   server.begin();
 }
 
+// Function to publish sensor values to both web server and MQTT
+void publishSensorValues(int sensorIdx, int value) {
+  for (int i = 0; i < NUM_SENSORS; i++) {
+    if (config.sensorIdx[i] == sensorIdx) {
+      lastPublishedValues[i] = value;
+      break;
+    }
+  }
+  DynamicJsonDocument doc(1024);
+  doc["idx"] = sensorIdx;
+  doc["nvalue"] = value;
+  doc["svalue"] = String(value);
+  String payload;
+  serializeJson(doc, payload);
+  mqttClient.beginMessage(config.mqtt_topic);
+  mqttClient.print(payload);
+  mqttClient.endMessage();
+}
+
 void loop() {
   static unsigned long lastSensorPollTime = 0;
+  unsigned long pollIntervalMillis = static_cast<unsigned long>(config.pollTime) * 60000UL;
+
   if (!mqttClient.connected()) {
     connectToMQTT();
   }
   mqttClient.poll();
-  
+
   if (relayOn && millis() >= relayOffTime) {
     digitalWrite(config.relayPin, LOW);
     relayOn = false;
   }
 
-  if (millis() - lastSensorPollTime > config.pollIntervalMinutes * 60000) { // Convert minutes to milliseconds
+  if (millis() - lastSensorPollTime > pollIntervalMillis) {
     lastSensorPollTime = millis();
     int sensorsBelowThreshold = 0;
     for (int i = 0; i < NUM_SENSORS; i++) {
       int sum = 0;
-      for (int j = 0; j < config.numberOfSamples; j++) {
+      for (int j = 0; j < config.Samples; j++) {
         sum += analogRead(config.SensorPin[i]);
       }
-      int average = sum / config.numberOfSamples;
+      int average = sum / config.Samples;
       Serial.printf("Sensor %d Raw Moisture: %d\n", i, average);
       int processedValue = mapSensorValue(average);
+
       if (processedValue != lastPublishedValues[i]) {
         lastPublishedValues[i] = processedValue;
         Serial.printf("Sensor %d Mapped Moisture: %d\n", i, processedValue);
-        // Prepare and send MQTT message with sensor data
-        DynamicJsonDocument doc(1024);
-        doc["idx"] = config.sensorIdx[i];
-        doc["nvalue"] = processedValue;
-        doc["svalue"] = String(processedValue);
-        String payload;
-        serializeJson(doc, payload);
-        mqttClient.beginMessage(config.mqtt_topic);
-        mqttClient.print(payload);
-        mqttClient.endMessage();
+        publishSensorValues(config.sensorIdx[i], processedValue);  // Publish sensor value
       }
-      
-      if (processedValue < config.moistureThreshold) {
+
+      if (processedValue < config.WetLimit) {
         sensorsBelowThreshold++;
       }
     }
 
-    if (sensorsBelowThreshold >= config.requiredMoistureSensors && !relayOn) {
+    if (sensorsBelowThreshold >= config.NoOfSensor && !relayOn) {
       digitalWrite(config.relayPin, HIGH);
       relayOn = true;
-      relayOffTime = millis() + config.relayOnTime * 1000; // Set the time to turn off the relay
+      relayOffTime = millis() + config.relayOnTime * 1000;
     }
   }
 }
