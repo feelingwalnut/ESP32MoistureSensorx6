@@ -25,6 +25,7 @@ struct Config {
   unsigned long pollIntervalMinutes = 60; // Default: 60 minutes
   int numberOfSamples = 10; // Default: 10 samples
   int requiredMoistureSensors = 3;
+  int sensorIdx[6] = {506, 507, 508, 509, 510, 511}; // Added line for sensor indices
 };
 
 Config config;
@@ -33,7 +34,6 @@ WiFiClient wifiClient;
 MqttClient mqttClient(wifiClient);
 AsyncWebServer server(80);
 int lastPublishedValues[6] = {0};
-int sensorIdx[] = {506, 507, 508, 509, 510, 511};
 
 int mapSensorValue(int rawValue) {
   return map(rawValue, config.rawValueRange[0], config.rawValueRange[1], config.scaleRange[0], config.scaleRange[1]);
@@ -69,6 +69,9 @@ void saveConfig() {
     preferences.putInt("pollIntervalMinutes", config.pollIntervalMinutes);
     preferences.putInt("numberOfSamples", config.numberOfSamples);
     preferences.putInt("requiredMoistureSensors", config.requiredMoistureSensors);
+    for(int i = 0; i < 6; i++) { // Save sensor indices
+      preferences.putInt(String("sensorIdx") + i, config.sensorIdx[i]);
+    }
     preferences.end();
 }
 
@@ -87,6 +90,9 @@ void loadConfig() {
     config.pollIntervalMinutes = preferences.getInt("pollIntervalMinutes", config.pollIntervalMinutes);
     config.numberOfSamples = preferences.getInt("numberOfSamples", config.numberOfSamples);
     config.requiredMoistureSensors = preferences.getInt("requiredMoistureSensors", config.requiredMoistureSensors);
+    for(int i = 0; i < 6; i++) { // Load sensor indices
+      config.sensorIdx[i] = preferences.getInt(String("sensorIdx") + i, config.sensorIdx[i]);
+    }
     preferences.end();
 }
 
@@ -160,21 +166,27 @@ void setupWebServer() {
       if (i < 5) html += ",";
     }
     html += "'><br>"
-                  "MQTT Server: <input type='text' name='mqttServer' value='" + config.mqtt_server + "'><br>"
-                  "MQTT Topic: <input type='text' name='mqttTopic' value='" + config.mqtt_topic + "'><br>"
-                  "MQTT Username: <input type='text' name='mqttUsername' value='" + config.mqtt_username + "'><br>"
-                  "MQTT Password: <input type='password' name='mqttPassword' value='" + config.mqtt_password + "'><br>"
-                  "Client ID: <input type='text' name='clientID' value='" + config.clientID + "'><br>"
-                  "Raw Value Range (dry-wet)(comma-separated): <input type='text' name='rawValueRange' value='" + String(config.rawValueRange[0]) + "," + String(config.rawValueRange[1]) + "'><br>"
-                  "Scale Range (dry-wet)(comma-separated): <input type='text' name='scaleRange' value='" + String(config.scaleRange[0]) + "," + String(config.scaleRange[1]) + "'><br>"
-                  "Relay Pin: <input type='text' name='relayPin' value='" + String(config.relayPin) + "'><br>"
-                  "Moisture Threshold: <input type='text' name='moistureThreshold' value='" + String(config.moistureThreshold) + "'><br>"
-                  "Relay On Time: <input type='text' name='relayOnTime' value='" + String(config.relayOnTime) + "'><br>"
-                  "Number of sensors required to trigger irrigation: <input type='text' name='requiredMoistureSensors' value='" + String(config.requiredMoistureSensors) + "'><br>"
-                  "Poll Interval (minutes): <input type='text' name='pollInterval' value='" + String(config.pollIntervalMinutes) + "'><br>"
-                  "Number of Samples: <input type='text' name='numSamples' value='" + String(config.numberOfSamples) + "'><br>"
-                  "<input type='submit' value='Update'>"
-                  "</form></body></html>";
+            "Sensor IDXs (comma-separated): <input type='text' name='sensorIdxs' value='";
+    for (int i = 0; i < 6; i++) {
+      html += String(config.sensorIdx[i]);
+      if (i < 5) html += ",";
+    }
+    html += "'><br>"
+            "MQTT Server: <input type='text' name='mqttServer' value='" + config.mqtt_server + "'><br>"
+            "MQTT Topic: <input type='text' name='mqttTopic' value='" + config.mqtt_topic + "'><br>"
+            "MQTT Username: <input type='text' name='mqttUsername' value='" + config.mqtt_username + "'><br>"
+            "MQTT Password: <input type='password' name='mqttPassword' value='" + config.mqtt_password + "'><br>"
+            "Client ID: <input type='text' name='clientID' value='" + config.clientID + "'><br>"
+            "Raw Value Range (dry-wet)(comma-separated): <input type='text' name='rawValueRange' value='" + String(config.rawValueRange[0]) + "," + String(config.rawValueRange[1]) + "'><br>"
+            "Scale Range (dry-wet)(comma-separated): <input type='text' name='scaleRange' value='" + String(config.scaleRange[0]) + "," + String(config.scaleRange[1]) + "'><br>"
+            "Relay Pin: <input type='text' name='relayPin' value='" + String(config.relayPin) + "'><br>"
+            "Moisture Threshold: <input type='text' name='moistureThreshold' value='" + String(config.moistureThreshold) + "'><br>"
+            "Relay On Time: <input type='text' name='relayOnTime' value='" + String(config.relayOnTime) + "'><br>"
+            "Number of sensors required to trigger irrigation: <input type='text' name='requiredMoistureSensors' value='" + String(config.requiredMoistureSensors) + "'><br>"
+            "Poll Interval (minutes): <input type='text' name='pollInterval' value='" + String(config.pollIntervalMinutes) + "'><br>"
+            "Number of Samples: <input type='text' name='numSamples' value='" + String(config.numberOfSamples) + "'><br>"
+            "<input type='submit' value='Update'>"
+            "</form></body></html>";
     request->send(200, "text/html", html);
   });
 
@@ -225,6 +237,19 @@ void setupWebServer() {
       String sensorPins = request->getParam("sensorPins", true)->value();
       parseAndSetSensorPins(sensorPins);
     }
+    if (request->hasParam("sensorIdxs", true)) {
+      String sensorIdxs = request->getParam("sensorIdxs", true)->value();
+      int idxArray[6]; // Temporary array to store parsed indices
+      int idx = 0, lastIdx = 0, arrayIdx = 0;
+      while ((idx = sensorIdxs.indexOf(',', lastIdx)) != -1 && arrayIdx < 6) {
+        idxArray[arrayIdx++] = sensorIdxs.substring(lastIdx, idx).toInt();
+        lastIdx = idx + 1;
+      }
+      idxArray[arrayIdx] = sensorIdxs.substring(lastIdx).toInt(); // Last value
+      for (int i = 0; i < 6; i++) {
+        config.sensorIdx[i] = idxArray[i];
+      }
+    }
     saveConfig(); // Save the updated configuration to NVS
     // Redirect back to the form page or indicate success
     request->send(200, "text/html", "<p>Settings updated. <a href='/'>Go back</a></p>");
@@ -265,7 +290,7 @@ void loop() {
         Serial.printf("Sensor %d Mapped Moisture: %d\n", i, processedValue);
         // Prepare and send MQTT message with sensor data
         DynamicJsonDocument doc(1024);
-        doc["idx"] = sensorIdx[i];
+        doc["idx"] = config.sensorIdx[i];
         doc["nvalue"] = processedValue;
         doc["svalue"] = String(processedValue);
         String payload;
