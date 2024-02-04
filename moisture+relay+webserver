@@ -5,9 +5,10 @@
 #include <ESPAsyncWebServer.h>
 #include <ArduinoMqttClient.h>
 #include <ArduinoJson.h>
-#include <Preferences.h> // Include the Preferences library
+#include <Preferences.h>
 
-// Define configuration settings
+#define NUM_SENSORS 6
+
 struct Config {
   String ssid = "ssid";
   String wifi_password = "password";
@@ -16,44 +17,45 @@ struct Config {
   String mqtt_password = "mqtt_pass";
   String clientID = "device_name";
   String mqtt_topic = "domoticz/in";
-  int SensorPin[6] = {36, 39, 34, 35, 32, 33};
-  int rawValueRange[2] = {2830, 890}; //dry-wet
-  int scaleRange[2] = {200, 0};//dry-wet
+  int SensorPin[NUM_SENSORS] = {36, 39, 34, 35, 32, 33};
+  int rawValueRange[2] = {2830, 890}; // Dry-wet
+  int scaleRange[2] = {200, 0}; // Dry-wet
   int relayPin = 26;
   int moistureThreshold = 100;
-  long relayOnTime = 10;//Time in seconds
+  long relayOnTime = 10; // Time in seconds
   unsigned long pollIntervalMinutes = 60; // Default: 60 minutes
   int numberOfSamples = 10; // Default: 10 samples
   int requiredMoistureSensors = 3;
-  int sensorIdx[6] = {506, 507, 508, 509, 510, 511}; // Added line for sensor indices
+  int sensorIdx[NUM_SENSORS] = {506, 507, 508, 509, 510, 511}; // Sensor indices for MQTT messages
 };
 
 Config config;
-Preferences preferences; // Create a Preferences object
+Preferences preferences;
 WiFiClient wifiClient;
 MqttClient mqttClient(wifiClient);
 AsyncWebServer server(80);
-int lastPublishedValues[6] = {0};
+int lastPublishedValues[NUM_SENSORS] = {0};
+unsigned long relayOffTime = 0; // For non-blocking relay timing
+bool relayOn = false; // Relay state tracking
 
+// Maps sensor value to a defined scale
 int mapSensorValue(int rawValue) {
   return map(rawValue, config.rawValueRange[0], config.rawValueRange[1], config.scaleRange[0], config.scaleRange[1]);
 }
 
-void parseAndSetSensorPins(String sensorPins) {
-  int sensorArray[6]; // Assuming a maximum of 6 sensors
-  int idx = 0;
-  int lastIdx = 0;
-  int arrayIdx = 0;
-  while ((idx = sensorPins.indexOf(',', lastIdx)) != -1 && arrayIdx < 6) {
-    sensorArray[arrayIdx++] = sensorPins.substring(lastIdx, idx).toInt();
+// Parses comma-separated string values into an integer array
+void parseCommaSeparatedValues(String input, int* outputArray, int arraySize) {
+  int idx = 0, lastIdx = 0, arrayIdx = 0;
+  while ((idx = input.indexOf(',', lastIdx)) != -1 && arrayIdx < arraySize) {
+    outputArray[arrayIdx++] = input.substring(lastIdx, idx).toInt();
     lastIdx = idx + 1;
   }
-  sensorArray[arrayIdx] = sensorPins.substring(lastIdx).toInt(); // Last value
-  for (int i = 0; i < 6; i++) {
-    config.SensorPin[i] = sensorArray[i];
+  if (arrayIdx < arraySize) { // Handle the last value
+    outputArray[arrayIdx] = input.substring(lastIdx).toInt();
   }
 }
 
+// Saves configuration to non-volatile storage (NVS)
 void saveConfig() {
     preferences.begin("config", false);
     preferences.putString("ssid", config.ssid);
@@ -69,12 +71,13 @@ void saveConfig() {
     preferences.putInt("pollIntervalMinutes", config.pollIntervalMinutes);
     preferences.putInt("numberOfSamples", config.numberOfSamples);
     preferences.putInt("requiredMoistureSensors", config.requiredMoistureSensors);
-    for(int i = 0; i < 6; i++) { // Save sensor indices
+    for(int i = 0; i < NUM_SENSORS; i++) {
       preferences.putInt(String("sensorIdx") + i, config.sensorIdx[i]);
     }
     preferences.end();
 }
 
+// Loads configuration from non-volatile storage (NVS)
 void loadConfig() {
     preferences.begin("config", true);
     config.ssid = preferences.getString("ssid", config.ssid);
@@ -96,6 +99,7 @@ void loadConfig() {
     preferences.end();
 }
 
+// Connects to WiFi network or creates an ad-hoc network if connection fails
 void connectToWiFi() {
   Serial.print("Connecting to WiFi: ");
   Serial.println(config.ssid);
@@ -130,29 +134,30 @@ void connectToWiFi() {
     }
   }
 }
-
+// Connects to the MQTT server
 void connectToMQTT() {
   mqttClient.setId(config.clientID.c_str());
   mqttClient.setUsernamePassword(config.mqtt_username.c_str(), config.mqtt_password.c_str());
   int attempts = 0; // Counter for connection attempts
-  const int maxAttempts = 5; // Maximum number of connection attempts
-  while (!mqttClient.connect(config.mqtt_server.c_str(), 1883) && attempts < maxAttempts) {
+  while (!mqttClient.connect(config.mqtt_server.c_str(), 1883) && attempts < 5) {
     Serial.print(".");
     delay(5000); // Wait 5 seconds before the next attempt
     attempts++; // Increment the attempt counter
   }
-  if (attempts < maxAttempts) {
+  if (attempts < 5) {
     Serial.println("\nConnected to MQTT");
   } else {
     Serial.println("\nFailed to connect to MQTT, proceeding without MQTT functionality.");
   }
 }
 
+// Connects to WiFi and MQTT
 void connectToNetwork() {
   connectToWiFi();
   connectToMQTT();
 }
 
+// Sets up the web server and handles GET and POST requests
 void setupWebServer() {
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
     // Generate HTML form with current configuration values
@@ -187,80 +192,80 @@ void setupWebServer() {
             "Number of Samples: <input type='text' name='numSamples' value='" + String(config.numberOfSamples) + "'><br>"
             "<input type='submit' value='Update'>"
             "</form></body></html>";
-    request->send(200, "text/html", html);
-  });
+        request->send(200, "text/html", html);
+    });
 
-  server.on("/submit", HTTP_POST, [](AsyncWebServerRequest *request) {
-    // Temporary variables to hold the parsed form inputs
-    String tempSensorPins, tempRawValueRange, tempScaleRange;
-    // Update config settings from form inputs
-    if (request->hasParam("ssid", true)) {
-      config.ssid = request->getParam("ssid", true)->value();
-    }
-    if (request->hasParam("wifiPassword", true)) {
-      config.wifi_password = request->getParam("wifiPassword", true)->value();
-    }
-    if (request->hasParam("mqttServer", true)) {
-      config.mqtt_server = request->getParam("mqttServer", true)->value();
-    }
-    if (request->hasParam("mqttTopic", true)) {
-      config.mqtt_topic = request->getParam("mqttTopic", true)->value();
-    }
-    if (request->hasParam("mqttUsername", true)) {
-      config.mqtt_username = request->getParam("mqttUsername", true)->value();
-    }
-    if (request->hasParam("mqttPassword", true)) {
-      config.mqtt_password = request->getParam("mqttPassword", true)->value();
-    }
-    if (request->hasParam("clientID", true)) {
-      config.clientID = request->getParam("clientID", true)->value();
-    }
-    if (request->hasParam("relayPin", true)) {
-      config.relayPin = request->getParam("relayPin", true)->value().toInt();
-    }
-    if (request->hasParam("moistureThreshold", true)) {
-      config.moistureThreshold = request->getParam("moistureThreshold", true)->value().toInt();
-    }
-    if (request->hasParam("relayOnTime", true)) {
-      config.relayOnTime = request->getParam("relayOnTime", true)->value().toInt();
-    }
-    if (request->hasParam("requiredMoistureSensors", true)) {
-      config.requiredMoistureSensors = request->getParam("requiredMoistureSensors", true)->value().toInt();
-    }
-    if (request->hasParam("pollInterval", true)) {
-      config.pollIntervalMinutes = request->getParam("pollInterval", true)->value().toInt();
-    }
-    if (request->hasParam("numSamples", true)) {
-      config.numberOfSamples = request->getParam("numSamples", true)->value().toInt();
-    }
-    if (request->hasParam("sensorPins", true)) {
-      String sensorPins = request->getParam("sensorPins", true)->value();
-      parseAndSetSensorPins(sensorPins);
-    }
-    if (request->hasParam("sensorIdxs", true)) {
-      String sensorIdxs = request->getParam("sensorIdxs", true)->value();
-      int idxArray[6]; // Temporary array to store parsed indices
-      int idx = 0, lastIdx = 0, arrayIdx = 0;
-      while ((idx = sensorIdxs.indexOf(',', lastIdx)) != -1 && arrayIdx < 6) {
-        idxArray[arrayIdx++] = sensorIdxs.substring(lastIdx, idx).toInt();
-        lastIdx = idx + 1;
-      }
-      idxArray[arrayIdx] = sensorIdxs.substring(lastIdx).toInt(); // Last value
-      for (int i = 0; i < 6; i++) {
-        config.sensorIdx[i] = idxArray[i];
-      }
-    }
-    saveConfig(); // Save the updated configuration to NVS
-    // Redirect back to the form page or indicate success
-    request->send(200, "text/html", "<p>Settings updated. <a href='/'>Go back</a></p>");
-    delay(3000);
-    ESP.restart();
-  });
+    server.on("/submit", HTTP_POST, [](AsyncWebServerRequest *request) {
+        // Temporary variables to hold the parsed form inputs
+        String tempSensorPins, tempRawValueRange, tempScaleRange;
+        // Update config settings from form inputs
+        if (request->hasParam("ssid", true)) {
+          config.ssid = request->getParam("ssid", true)->value();
+        }
+        if (request->hasParam("wifiPassword", true)) {
+          config.wifi_password = request->getParam("wifiPassword", true)->value();
+        }
+        if (request->hasParam("mqttServer", true)) {
+          config.mqtt_server = request->getParam("mqttServer", true)->value();
+        }
+        if (request->hasParam("mqttTopic", true)) {
+          config.mqtt_topic = request->getParam("mqttTopic", true)->value();
+        }
+        if (request->hasParam("mqttUsername", true)) {
+          config.mqtt_username = request->getParam("mqttUsername", true)->value();
+        }
+        if (request->hasParam("mqttPassword", true)) {
+          config.mqtt_password = request->getParam("mqttPassword", true)->value();
+        }
+        if (request->hasParam("clientID", true)) {
+          config.clientID = request->getParam("clientID", true)->value();
+        }
+        if (request->hasParam("relayPin", true)) {
+          config.relayPin = request->getParam("relayPin", true)->value().toInt();
+        }
+        if (request->hasParam("moistureThreshold", true)) {
+          config.moistureThreshold = request->getParam("moistureThreshold", true)->value().toInt();
+        }
+        if (request->hasParam("relayOnTime", true)) {
+          config.relayOnTime = request->getParam("relayOnTime", true)->value().toInt();
+        }
+        if (request->hasParam("requiredMoistureSensors", true)) {
+          config.requiredMoistureSensors = request->getParam("requiredMoistureSensors", true)->value().toInt();
+        }
+        if (request->hasParam("pollInterval", true)) {
+          config.pollIntervalMinutes = request->getParam("pollInterval", true)->value().toInt();
+        }
+        if (request->hasParam("numSamples", true)) {
+          config.numberOfSamples = request->getParam("numSamples", true)->value().toInt();
+        }
+        if (request->hasParam("sensorPins", true)) {
+          String sensorPins = request->getParam("sensorPins", true)->value();
+          parseAndSetSensorPins(sensorPins);
+        }
+        if (request->hasParam("sensorIdxs", true)) {
+          String sensorIdxs = request->getParam("sensorIdxs", true)->value();
+          int idxArray[6]; // Temporary array to store parsed indices
+          int idx = 0, lastIdx = 0, arrayIdx = 0;
+          while ((idx = sensorIdxs.indexOf(',', lastIdx)) != -1 && arrayIdx < 6) {
+            idxArray[arrayIdx++] = sensorIdxs.substring(lastIdx, idx).toInt();
+            lastIdx = idx + 1;
+          }
+          idxArray[arrayIdx] = sensorIdxs.substring(lastIdx).toInt(); // Last value
+          for (int i = 0; i < 6; i++) {
+            config.sensorIdx[i] = idxArray[i];
+          }
+        }
+        saveConfig(); // Save the updated configuration to NVS
+        // Redirect back to the form page or indicate success
+        request->send(200, "text/html", "<p>Settings updated. <a href='/'>Go back</a></p>");
+        delay(3000);
+        ESP.restart();
+    });
 }
 
 void setup() {
   Serial.begin(9600);
-  loadConfig(); // Load the configuration from NVS
+  loadConfig();
   connectToNetwork();
   pinMode(config.relayPin, OUTPUT);
   digitalWrite(config.relayPin, LOW);
@@ -271,20 +276,26 @@ void setup() {
 void loop() {
   static unsigned long lastSensorPollTime = 0;
   if (!mqttClient.connected()) {
-    connectToMQTT(); // Reconnect to MQTT if disconnected
+    connectToMQTT();
   }
-  mqttClient.poll(); // Process MQTT messages
-  if (millis() - lastSensorPollTime > config.pollIntervalMinutes * 60000) {
+  mqttClient.poll();
+  
+  if (relayOn && millis() >= relayOffTime) {
+    digitalWrite(config.relayPin, LOW);
+    relayOn = false;
+  }
+
+  if (millis() - lastSensorPollTime > config.pollIntervalMinutes * 60000) { // Convert minutes to milliseconds
     lastSensorPollTime = millis();
     int sensorsBelowThreshold = 0;
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < NUM_SENSORS; i++) {
       int sum = 0;
       for (int j = 0; j < config.numberOfSamples; j++) {
-        sum += analogRead(config.SensorPin[i]); // Read sensor value
+        sum += analogRead(config.SensorPin[i]);
       }
       int average = sum / config.numberOfSamples;
       Serial.printf("Sensor %d Raw Moisture: %d\n", i, average);
-      int processedValue = mapSensorValue(average); // Map sensor value to scale
+      int processedValue = mapSensorValue(average);
       if (processedValue != lastPublishedValues[i]) {
         lastPublishedValues[i] = processedValue;
         Serial.printf("Sensor %d Mapped Moisture: %d\n", i, processedValue);
@@ -299,14 +310,16 @@ void loop() {
         mqttClient.print(payload);
         mqttClient.endMessage();
       }
+      
       if (processedValue < config.moistureThreshold) {
         sensorsBelowThreshold++;
       }
     }
-    if (sensorsBelowThreshold >= config.requiredMoistureSensors) {
+
+    if (sensorsBelowThreshold >= config.requiredMoistureSensors && !relayOn) {
       digitalWrite(config.relayPin, HIGH);
-      delay(config.relayOnTime * 1000); // Convert seconds to milliseconds
-      digitalWrite(config.relayPin, LOW);
+      relayOn = true;
+      relayOffTime = millis() + config.relayOnTime * 1000; // Set the time to turn off the relay
     }
   }
 }
