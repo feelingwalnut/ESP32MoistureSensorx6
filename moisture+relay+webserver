@@ -17,16 +17,16 @@ struct Config {
   String mqtt_password = "mqtt_pass";
   String clientID = "device_name";
   String mqtt_topic = "domoticz/in";
-  int SensorPin[NUM_SENSORS] = {36,39,34,35,32,33};
-  int rawRange[2] = {2830,890}; // Dry-wet
-  int scaleRange[2] = {200,0}; // Dry-wet
+  int SensorPin[NUM_SENSORS] = { 36, 39, 34, 35, 32, 33 };
+  int rawRange[2] = { 2830, 890 };  // Dry-wet
+  int scaleRange[2] = { 200, 0 };   // Dry-wet
   int relayPin = 26;
   int WetLimit = 100;
-  long relayOnTime = 10; // Time in seconds
-  unsigned long pollTime = 60; // Default: 60 minutes
-  int Samples = 10; // Default: 10 samples
+  long relayOnTime = 10;        // Time in seconds
+  unsigned long pollTime = 60;  // Default: 60 minutes
+  int Samples = 10;             // Default: 10 samples
   int NoOfSensor = 3;
-  int sensorIdx[NUM_SENSORS] = {506,507,508,509,510,511};  // Sensor indices for MQTT messages
+  int sensorIdx[NUM_SENSORS] = { 506, 507, 508, 509, 510, 511 };  // Sensor indices for MQTT messages
 };
 
 Config config;
@@ -203,7 +203,19 @@ void parseCommaSeparatedValues(String csv, int array[], int arraySize) {
     }
   }
 }
-
+// Function to immediately poll each sensor and publish the readings to MQTT
+void pollAndPublishSensors() {
+  for (int i = 0; i < NUM_SENSORS; i++) {
+    int sum = 0;
+    for (int j = 0; j < config.Samples; j++) {
+      sum += analogRead(config.SensorPin[i]);
+    }
+    int average = sum / config.Samples;
+    Serial.printf("Immediate Poll - Sensor %d Raw Moisture: %d\n", i, average);
+    int processedValue = mapSensorValue(average);
+    publishSensorValues(config.sensorIdx[i], processedValue);  // Publish sensor value
+  }
+}
 // Sets up the web server and handles GET and POST requests
 void setupWebServer() {
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -243,25 +255,34 @@ void setupWebServer() {
             + config.clientID + "'><br>"
                                 "Raw Value Range (dry-wet)(comma-separated): <input type='text' name='rawRange' value='"
             + String(config.rawRange[0]) + "," + String(config.rawRange[1]) + "'><br>"
-                                                                                        "Scale Range (dry-wet)(comma-separated): <input type='text' name='scaleRange' value='"
+                                                                              "Scale Range (dry-wet)(comma-separated): <input type='text' name='scaleRange' value='"
             + String(config.scaleRange[0]) + "," + String(config.scaleRange[1]) + "'><br>"
                                                                                   "Relay Pin: <input type='text' name='relayPin' value='"
             + String(config.relayPin) + "'><br>"
                                         "Moisture Threshold: <input type='text' name='WetLimit' value='"
             + String(config.WetLimit) + "'><br>"
-                                                 "Relay On Time: <input type='text' name='relayOnTime' value='"
+                                        "Relay On Time: <input type='text' name='relayOnTime' value='"
             + String(config.relayOnTime) + "'><br>"
                                            "Number of sensors required to trigger irrigation: <input type='text' name='NoOfSensor' value='"
             + String(config.NoOfSensor) + "'><br>"
-                                                       "Poll Interval (minutes): <input type='text' name='pollTime' value='"
+                                          "Poll Interval (minutes): <input type='text' name='pollTime' value='"
             + String(config.pollTime) + "'><br>"
-                                                   "Number of Samples: <input type='text' name='numSamples' value='"
+                                        "Number of Samples: <input type='text' name='numSamples' value='"
             + String(config.Samples) + "'><br>"
-                                               "<input type='submit' value='Update'>"
-                                               "</form></body></html>";
+                                       "<input type='submit' value='Update'>"
+                                       "</form>"
+                                       // Add a separate form for the "Poll Sensors Now" button
+                                       "<form action='/pollSensors' method='POST'>"
+                                       "<input type='submit' value='Poll Sensors Now'>"
+                                       "</form></body></html>";
     request->send(200, "text/html", html);
   });
-
+  // Handle the immediate sensor polling button action
+  server.on("/pollSensors", HTTP_POST, [](AsyncWebServerRequest *request) {
+    pollAndPublishSensors();  // Call the function to poll and publish sensor data
+    // Redirect back to the main page or indicate success
+    request->send(200, "text/html", "<p>Sensors polled successfully. Redirecting...</p><script>setTimeout(function(){window.location.href='/'}, 3000);</script>");
+  });
   server.on("/submit", HTTP_POST, [](AsyncWebServerRequest *request) {
     // Temporary variables to hold the parsed form inputs
     String tempSensorPins, tempSensorIdxs;
