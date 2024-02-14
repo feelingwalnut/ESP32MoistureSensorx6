@@ -6,7 +6,6 @@
 #include <ArduinoMqttClient.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
-
 #define NUM_SENSORS 6
 
 struct Config {
@@ -15,18 +14,18 @@ struct Config {
   String mqtt_server = "mqtt_address";
   String mqtt_username = "mqtt_username";
   String mqtt_password = "mqtt_pass";
-  String clientID = "device_name";
+  String clientID = "sensor";
   String mqtt_topic = "domoticz/in";
-  int SensorPin[NUM_SENSORS] = { 36, 39, 34, 35, 32, 33 };
+  int SensorPin[NUM_SENSORS] = { 0, 0, 0, 0, 0, 0 };
   int rawRange[2] = { 2830, 890 };  // Dry-wet
   int scaleRange[2] = { 200, 0 };   // Dry-wet
   int relayPin = 26;
   int WetLimit = 100;
-  long relayOnTime = 10;        // Time in seconds
-  unsigned long pollTime = 60;  // Default: 60 minutes
-  int Samples = 10;             // Default: 10 samples
+  long relayOnTime = 10;
+  unsigned long pollTime = 60;
+  int Samples = 10;
   int NoOfSensor = 3;
-  int sensorIdx[NUM_SENSORS] = { 506, 507, 508, 509, 510, 511 };  // Sensor indices for MQTT messages
+  int sensorIdx[NUM_SENSORS] = { 0, 0, 0, 0, 0, 0 };
 };
 
 Config config;
@@ -35,15 +34,12 @@ WiFiClient wifiClient;
 MqttClient mqttClient(wifiClient);
 AsyncWebServer server(80);
 int lastPublishedValues[NUM_SENSORS] = { 0 };
-unsigned long relayOffTime = 0;  // For non-blocking relay timing
-bool relayOn = false;            // Relay state tracking
-
-// Maps sensor value to a defined scale
+unsigned long relayOffTime = 0;
+bool relayOn = false;
 int mapSensorValue(int rawValue) {
   return map(rawValue, config.rawRange[0], config.rawRange[1], config.scaleRange[0], config.scaleRange[1]);
 }
 
-// Saves configuration to non-volatile storage (NVS)
 void saveConfig() {
   preferences.begin("config", false);
   preferences.putString("ssid", config.ssid);
@@ -59,15 +55,12 @@ void saveConfig() {
   preferences.putInt("pollTime", config.pollTime);
   preferences.putInt("Samples", config.Samples);
   preferences.putInt("NoOfSensor", config.NoOfSensor);
-  // Convert SensorPin array to CSV string and save
   String sensorPinsCSV = "";
   for (int i = 0; i < NUM_SENSORS; i++) {
     sensorPinsCSV += String(config.SensorPin[i]);
     if (i < NUM_SENSORS - 1) sensorPinsCSV += ",";
   }
   preferences.putString("SensorPin", sensorPinsCSV);
-
-  // Convert sensorIdx array to CSV string and save
   String sensorIdxCSV = "";
   for (int i = 0; i < NUM_SENSORS; i++) {
     sensorIdxCSV += String(config.sensorIdx[i]);
@@ -81,7 +74,6 @@ void saveConfig() {
   preferences.end();
 }
 
-// Loads configuration from non-volatile storage (NVS)
 void loadConfig() {
   preferences.begin("config", true);
   config.ssid = preferences.getString("ssid", config.ssid);
@@ -97,13 +89,10 @@ void loadConfig() {
   config.pollTime = preferences.getInt("pollTime", config.pollTime);
   config.Samples = preferences.getInt("Samples", config.Samples);
   config.NoOfSensor = preferences.getInt("NoOfSensor", config.NoOfSensor);
-  // Load and parse SensorPin CSV string
   String sensorPinsCSV = preferences.getString("SensorPin", "");
   if (!sensorPinsCSV.isEmpty()) {
     parseCommaSeparatedValues(sensorPinsCSV, config.SensorPin, NUM_SENSORS);
   }
-
-  // Load and parse sensorIdx CSV string
   String sensorIdxCSV = preferences.getString("sensorIdx", "");
   if (!sensorIdxCSV.isEmpty()) {
     parseCommaSeparatedValues(sensorIdxCSV, config.sensorIdx, NUM_SENSORS);
@@ -115,13 +104,12 @@ void loadConfig() {
   preferences.end();
 }
 
-// Connects to WiFi network or creates an ad-hoc network if connection fails
 void connectToWiFi() {
   Serial.print("Connecting to WiFi: ");
   Serial.println(config.ssid);
   WiFi.begin(config.ssid.c_str(), config.wifi_password.c_str());
   unsigned long startTime = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - startTime < 30000) {  // 30 seconds timeout
+  while (WiFi.status() != WL_CONNECTED && millis() - startTime < 30000) {
     delay(500);
     Serial.print(".");
   }
@@ -131,7 +119,6 @@ void connectToWiFi() {
     Serial.println(WiFi.localIP());
   } else {
     Serial.println("Failed to connect to WiFi. Creating an ad-hoc network...");
-    // Explicitly setting WiFi mode to AP (Access Point)
     WiFi.mode(WIFI_AP);
     IPAddress local_IP(192, 168, 1, 1);
     IPAddress gateway(192, 168, 1, 1);
@@ -140,8 +127,7 @@ void connectToWiFi() {
       Serial.println("AP Config Failed");
       return;
     }
-    // Attempting to create Soft AP
-    bool apSuccess = WiFi.softAP("Plants");  // SSID for the ad-hoc network
+    bool apSuccess = WiFi.softAP("Plants");
     if (apSuccess) {
       Serial.print("Ad-hoc network SSID: 'Plants' with IP: ");
       Serial.println(WiFi.softAPIP());
@@ -150,31 +136,49 @@ void connectToWiFi() {
     }
   }
 }
-// Connects to the MQTT server
+
 void connectToMQTT() {
   mqttClient.setId(config.clientID.c_str());
   mqttClient.setUsernamePassword(config.mqtt_username.c_str(), config.mqtt_password.c_str());
-  int attempts = 0;  // Counter for connection attempts
+  int attempts = 0;
   while (!mqttClient.connect(config.mqtt_server.c_str(), 1883) && attempts < 3) {
     Serial.print(".");
-    delay(5000);  // Wait 5 seconds before the next attempt
-    attempts++;   // Increment the attempt counter
+    delay(5000);
+    attempts++;
   }
   if (attempts < 3) {
     Serial.println("\nConnected to MQTT");
   } else {
     Serial.println("\nFailed to connect to MQTT, proceeding without MQTT functionality.");
-    // After 3 unsuccessful attempts, the function will end, allowing the program to continue without MQTT functionality
   }
 }
 
-// Connects to WiFi and MQTT
+void publishSensorValues(int sensorIdx, int value) {
+  for (int i = 0; i < NUM_SENSORS; i++) {
+    if (config.sensorIdx[i] == sensorIdx) {
+      lastPublishedValues[i] = value;
+      break;
+    }
+  }
+  DynamicJsonDocument doc(1024);
+  doc["moisture"] = value;
+  String payload;
+  serializeJson(doc, payload);
+  if (config.mqtt_topic.isEmpty()) {
+    String stateTopic = "homeassistant/" + config.clientID + "/sensor" + String(sensorIdx) + "/state";
+    mqttClient.beginMessage(stateTopic);
+  } else {
+    mqttClient.beginMessage(config.mqtt_topic);
+  }
+  mqttClient.print(payload);
+  mqttClient.endMessage();
+}
+
 void connectToNetwork() {
   connectToWiFi();
   connectToMQTT();
 }
 
-// Parses comma-separated sensor pins and updates the configuration
 void parseAndSetSensorPins(String sensorPins) {
   int pinsArray[NUM_SENSORS];
   parseCommaSeparatedValues(sensorPins, pinsArray, NUM_SENSORS);
@@ -182,6 +186,7 @@ void parseAndSetSensorPins(String sensorPins) {
     config.SensorPin[i] = pinsArray[i];
   }
 }
+
 void parseAndSetSensorIdxs(String sensorIdxs) {
   int idxsArray[NUM_SENSORS];
   parseCommaSeparatedValues(sensorIdxs, idxsArray, NUM_SENSORS);
@@ -189,10 +194,10 @@ void parseAndSetSensorIdxs(String sensorIdxs) {
     config.sensorIdx[i] = idxsArray[i];
   }
 }
-// Parses a comma-separated string into an array of integers
+
 void parseCommaSeparatedValues(String csv, int array[], int arraySize) {
-  int idx = 0;      // Index for the current position in the array
-  int lastIdx = 0;  // Last index where a number starts
+  int idx = 0;
+  int lastIdx = 0;
   for (int i = 0; i <= csv.length(); i++) {
     // Check for end of string or comma
     if (i == csv.length() || csv[i] == ',') {
@@ -203,8 +208,26 @@ void parseCommaSeparatedValues(String csv, int array[], int arraySize) {
     }
   }
 }
-// Function to immediately poll each sensor and publish the readings to MQTT
+
+void publishMQTTDiscoveryConfig() {
+  for (int i = 0; i < NUM_SENSORS; i++) {
+    DynamicJsonDocument configDoc(1024);
+    String configTopic = "homeassistant/sensor/" + config.clientID + "_sensor" + String(i) + "/config";
+    configDoc["name"] = "Plant_Sensor " + String(i);
+    configDoc["device_class"] = "moisture";
+    configDoc["unit_of_measurement"] = "%";
+    configDoc["state_topic"] = "homeassistant/" + config.clientID + "/sensor" + String(i) + "/state";
+    configDoc["value_template"] = "{{ value_json.moisture }}";
+    String configPayload;
+    serializeJson(configDoc, configPayload);
+    mqttClient.beginMessage(configTopic);
+    mqttClient.print(configPayload);
+    mqttClient.endMessage();
+  }
+}
+
 void pollAndPublishSensors() {
+  int sensorsAtOrAboveThreshold = 0;
   for (int i = 0; i < NUM_SENSORS; i++) {
     int sum = 0;
     for (int j = 0; j < config.Samples; j++) {
@@ -213,13 +236,19 @@ void pollAndPublishSensors() {
     int average = sum / config.Samples;
     Serial.printf("Immediate Poll - Sensor %d Raw Moisture: %d\n", i, average);
     int processedValue = mapSensorValue(average);
-    publishSensorValues(config.sensorIdx[i], processedValue);  // Publish sensor value
+    publishSensorValues(config.sensorIdx[i], processedValue);
+    if (processedValue >= config.WetLimit) {
+      sensorsAtOrAboveThreshold++;
+    }
+  }
+  if (sensorsAtOrAboveThreshold >= config.NoOfSensor && !relayOn) {
+    triggerRelayForInterval();
+    Serial.println("Manual polling triggered irrigation.");
   }
 }
-// Sets up the web server and handles GET and POST requests
+
 void setupWebServer() {
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-    // Generate HTML form with current configuration values
     String html = "<html><body><h1>Plant Monitoring System</h1>"
                   "<h2>Sensor Readings</h2><ul>";
     for (int i = 0; i < NUM_SENSORS; i++) {
@@ -245,7 +274,7 @@ void setupWebServer() {
     html += "'><br>"
             "MQTT Server: <input type='text' name='mqttServer' value='"
             + config.mqtt_server + "'><br>"
-                                   "MQTT Topic: <input type='text' name='mqttTopic' value='"
+                                   "MQTT Topic: (Leave empty for HA Discovery) <input type='text' name='mqttTopic' value='"
             + config.mqtt_topic + "'><br>"
                                   "MQTT Username: <input type='text' name='mqttUsername' value='"
             + config.mqtt_username + "'><br>"
@@ -271,22 +300,24 @@ void setupWebServer() {
             + String(config.Samples) + "'><br>"
                                        "<input type='submit' value='Update'>"
                                        "</form>"
-                                       // Add a separate form for the "Poll Sensors Now" button
                                        "<form action='/pollSensors' method='POST'>"
                                        "<input type='submit' value='Poll Sensors Now'>"
+                                       "</form>"
+                                       "<form action='/triggerRelay' method='POST'>"
+                                       "<input type='submit' value='Trigger Relay'>"
                                        "</form></body></html>";
     request->send(200, "text/html", html);
   });
-  // Handle the immediate sensor polling button action
   server.on("/pollSensors", HTTP_POST, [](AsyncWebServerRequest *request) {
-    pollAndPublishSensors();  // Call the function to poll and publish sensor data
-    // Redirect back to the main page or indicate success
+    pollAndPublishSensors();
     request->send(200, "text/html", "<p>Sensors polled successfully. Redirecting...</p><script>setTimeout(function(){window.location.href='/'}, 3000);</script>");
   });
+  server.on("/triggerRelay", HTTP_POST, [](AsyncWebServerRequest *request) {
+    triggerRelayForInterval();
+    request->send(200, "text/html", "<p>Relay triggered. Redirecting...</p><script>setTimeout(function(){window.location.href='/'}, 3000);</script>");
+  });
   server.on("/submit", HTTP_POST, [](AsyncWebServerRequest *request) {
-    // Temporary variables to hold the parsed form inputs
     String tempSensorPins, tempSensorIdxs;
-    // Update config settings from form inputs
     if (request->hasParam("ssid", true)) {
       config.ssid = request->getParam("ssid", true)->value();
     }
@@ -332,7 +363,6 @@ void setupWebServer() {
       config.scaleRange[0] = rangeArray[0];
       config.scaleRange[1] = rangeArray[1];
     }
-
     if (request->hasParam("relayOnTime", true)) {
       config.relayOnTime = request->getParam("relayOnTime", true)->value().toInt();
     }
@@ -349,13 +379,18 @@ void setupWebServer() {
       String sensorPins = request->getParam("sensorPins", true)->value();
       parseAndSetSensorPins(sensorPins);
     }
-
-    saveConfig();  // Save the updated configuration to NVS
-    // Redirect back to the form page or indicate success
+    saveConfig();
     request->send(200, "text/html", "<p>Settings updated. The device will restart now.</p><script>setTimeout(function(){window.location.href='/'}, 3000);</script>");
     delay(100);
     ESP.restart();
   });
+}
+
+void triggerRelayForInterval() {
+  digitalWrite(config.relayPin, HIGH);
+  relayOn = true;
+  relayOffTime = millis() + config.relayOnTime * 1000;  // Use the configured relay on time
+  Serial.println("Relay triggered!");
 }
 
 void setup() {
@@ -366,44 +401,25 @@ void setup() {
   digitalWrite(config.relayPin, LOW);
   setupWebServer();
   server.begin();
-}
-
-// Function to publish sensor values to both web server and MQTT
-void publishSensorValues(int sensorIdx, int value) {
-  for (int i = 0; i < NUM_SENSORS; i++) {
-    if (config.sensorIdx[i] == sensorIdx) {
-      lastPublishedValues[i] = value;
-      break;
-    }
+  if (config.mqtt_topic.isEmpty()) {
+    publishMQTTDiscoveryConfig();
   }
-  DynamicJsonDocument doc(1024);
-  doc["idx"] = sensorIdx;
-  doc["nvalue"] = value;
-  doc["svalue"] = String(value);
-  String payload;
-  serializeJson(doc, payload);
-  mqttClient.beginMessage(config.mqtt_topic);
-  mqttClient.print(payload);
-  mqttClient.endMessage();
 }
 
 void loop() {
   static unsigned long lastSensorPollTime = 0;
   unsigned long pollIntervalMillis = static_cast<unsigned long>(config.pollTime) * 60000UL;
-
   if (!mqttClient.connected()) {
     connectToMQTT();
   }
   mqttClient.poll();
-
   if (relayOn && millis() >= relayOffTime) {
     digitalWrite(config.relayPin, LOW);
     relayOn = false;
   }
-
   if (millis() - lastSensorPollTime > pollIntervalMillis) {
     lastSensorPollTime = millis();
-    int sensorsBelowThreshold = 0;
+    int sensorsAtOrAboveThreshold = 0;
     for (int i = 0; i < NUM_SENSORS; i++) {
       int sum = 0;
       for (int j = 0; j < config.Samples; j++) {
@@ -412,22 +428,17 @@ void loop() {
       int average = sum / config.Samples;
       Serial.printf("Sensor %d Raw Moisture: %d\n", i, average);
       int processedValue = mapSensorValue(average);
-
       if (processedValue != lastPublishedValues[i]) {
         lastPublishedValues[i] = processedValue;
         Serial.printf("Sensor %d Mapped Moisture: %d\n", i, processedValue);
-        publishSensorValues(config.sensorIdx[i], processedValue);  // Publish sensor value
+        publishSensorValues(config.sensorIdx[i], processedValue);
       }
-
-      if (processedValue < config.WetLimit) {
-        sensorsBelowThreshold++;
+      if (processedValue >= config.WetLimit) {
+        sensorsAtOrAboveThreshold++;
       }
     }
-
-    if (sensorsBelowThreshold >= config.NoOfSensor && !relayOn) {
-      digitalWrite(config.relayPin, HIGH);
-      relayOn = true;
-      relayOffTime = millis() + config.relayOnTime * 1000;
+    if (sensorsAtOrAboveThreshold >= config.NoOfSensor && !relayOn) {
+      triggerRelayForInterval();
     }
   }
 }
