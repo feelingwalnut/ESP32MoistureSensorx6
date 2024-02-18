@@ -8,6 +8,8 @@
 #include <Preferences.h>
 #define NUM_SENSORS 6
 
+void parseCommaSeparatedValues(String csv, int array[], int arraySize);
+
 struct Config {
   String ssid = "ssid";
   String wifi_password = "password";
@@ -170,14 +172,23 @@ void publishSensorValues(int sensorIdx, int value) {
     String payload;
     serializeJson(doc, payload);
     if (!config.mqtt_topic.isEmpty()) {
+      // Publish to the configured MQTT topic
       mqttClient.beginMessage(config.mqtt_topic);
       mqttClient.print(payload);
       mqttClient.endMessage();
     } else {
-      Serial.println("MQTT topic is empty, cannot publish sensor values to Domoticz.");
+      // If MQTT topic is empty, use Home Assistant discovery format
+      String stateTopic = "homeassistant/" + config.clientID + "/sensor" + String(sensorIdx) + "/state";
+      DynamicJsonDocument haDoc(1024);
+      haDoc["moisture"] = value;
+      String haPayload;
+      serializeJson(haDoc, haPayload);
+      mqttClient.beginMessage(stateTopic);
+      mqttClient.print(haPayload);
+      mqttClient.endMessage();
     }
   } else {
-    Serial.println("Invalid sensorIdx, cannot publish sensor values to Domoticz.");
+    Serial.println("MQTT topic is empty, cannot publish sensor values to Domoticz.");
   }
 }
 
