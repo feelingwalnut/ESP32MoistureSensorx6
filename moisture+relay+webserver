@@ -154,24 +154,31 @@ void connectToMQTT() {
 }
 
 void publishSensorValues(int sensorIdx, int value) {
+  int domoticzIdx = -1;
   for (int i = 0; i < NUM_SENSORS; i++) {
     if (config.sensorIdx[i] == sensorIdx) {
+      domoticzIdx = sensorIdx;
       lastPublishedValues[i] = value;
       break;
     }
   }
-  DynamicJsonDocument doc(1024);
-  doc["moisture"] = value;
-  String payload;
-  serializeJson(doc, payload);
-  if (config.mqtt_topic.isEmpty()) {
-    String stateTopic = "homeassistant/" + config.clientID + "/sensor" + String(sensorIdx) + "/state";
-    mqttClient.beginMessage(stateTopic);
+  if (domoticzIdx != -1) {
+    DynamicJsonDocument doc(1024);
+    doc["idx"] = domoticzIdx;
+    doc["nvalue"] = value;
+    doc["svalue"] = String(value);
+    String payload;
+    serializeJson(doc, payload);
+    if (!config.mqtt_topic.isEmpty()) {
+      mqttClient.beginMessage(config.mqtt_topic);
+      mqttClient.print(payload);
+      mqttClient.endMessage();
+    } else {
+      Serial.println("MQTT topic is empty, cannot publish sensor values to Domoticz.");
+    }
   } else {
-    mqttClient.beginMessage(config.mqtt_topic);
+    Serial.println("Invalid sensorIdx, cannot publish sensor values to Domoticz.");
   }
-  mqttClient.print(payload);
-  mqttClient.endMessage();
 }
 
 void connectToNetwork() {
